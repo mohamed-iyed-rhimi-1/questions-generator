@@ -1,0 +1,36 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# Storage directories (keep structure, not files)
+app/storage/audio/*
+app/storage/thumbnails/*
+!app/storage/.gitkeep
+
+# Development files
+*.md
+.env
+.env.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# Database files
+*.db
+*.sqlite
+
+# Alembic compiled files
+alembic/versions/*.pyc

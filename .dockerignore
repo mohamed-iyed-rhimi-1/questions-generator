@@ -1,0 +1,49 @@
+# Version control
+.git/
+.gitignore
+.github/
+
+# Documentation
+README.md
+*.md
+docs/
+
+# Environment files (keep .env.example for reference)
+.env
+.env.local
+.env.*.local
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Build artifacts and caches
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# Storage directories (will be mounted as volumes)
+backend/app/storage/audio/
+backend/app/storage/thumbnails/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Docker files (don't need to copy into image)
+docker-compose.yml
+docker-compose.prod.yml
+Dockerfile
+.dockerignore

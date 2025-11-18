@@ -1,0 +1,123 @@
+version: '3.8'
+
+# Docker Compose configuration for YouTube Q&A Generator
+# This setup includes PostgreSQL with pgvector, FastAPI backend, and React frontend
+# 
+# Prerequisites:
+# - Ollama should be running on your host machine (not containerized)
+# - Run: ollama pull iKhalid/ALLaM:7b (or your preferred model)
+#
+# Quick Start:
+# 1. Copy .env.example to .env and configure
+# 2. Run: docker-compose up -d --build
+# 3. Run migrations: docker-compose exec backend alembic upgrade head
+# 4. Access frontend at http://localhost:5173
+
+services:
+  # PostgreSQL database with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: youtube-qa-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-youtube_qa_db}
+    ports:
+      - "5433:5432"  # Exposed for external database tools
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - youtube-qa-network
+    restart: unless-stopped
+
+  # FastAPI backend with Whisper for transcription
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        WHISPER_MODEL: ${WHISPER_MODEL:-turbo}
+    container_name: youtube-qa-backend
+    environment:
+      # Database connection (uses service name 'postgres' as hostname)
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-youtube_qa_db}
+      # Ollama configuration (connects to host machine)
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-iKhalid/ALLaM:7b}
+      # Whisper configuration
+      WHISPER_MODEL: ${WHISPER_MODEL:-turbo}
+      # Storage configuration
+      STORAGE_PATH: /app/storage
+      # CORS configuration
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      # Mount code for hot-reload in development
+      - ./backend:/app
+      # Persistent storage for audio and thumbnails
+      - audio_storage:/app/storage/audio
+      - thumbnail_storage:/app/storage/thumbnails
+      # Persistent cache for ML models (Whisper and sentence-transformers)
+      - whisper_cache:/app/.cache/torch
+      - huggingface_cache:/app/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # Enable host.docker.internal for Linux hosts to connect to host services
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - youtube-qa-network
+    restart: unless-stopped
+
+  # React frontend with Vite
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development  # Use development stage for hot-reload
+    container_name: youtube-qa-frontend
+    environment:
+      # API URL for Vite proxy configuration (points to backend service in Docker network)
+      # Note: Using API_BACKEND_URL (without VITE_ prefix) so it's NOT exposed to browser
+      # Only the Vite dev server proxy uses this to forward requests
+      API_BACKEND_URL: http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      # Mount source code for hot-reload
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      # Prevent host node_modules from overriding container's
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - youtube-qa-network
+    restart: unless-stopped
+
+# Named volumes for data persistence
+volumes:
+  postgres_data:
+    driver: local
+  audio_storage:
+    driver: local
+  thumbnail_storage:
+    driver: local
+  # ML model caches to avoid re-downloading large models on rebuild
+  whisper_cache:
+    driver: local
+  huggingface_cache:
+    driver: local
+
+# Custom bridge network for inter-service communication
+networks:
+  youtube-qa-network:
+    driver: bridge

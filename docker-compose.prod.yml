@@ -1,0 +1,142 @@
+version: '3.8'
+
+# Production Docker Compose configuration for YouTube Q&A Generator
+# Optimized for performance, security, and resource management
+#
+# Usage:
+# docker-compose -f docker-compose.prod.yml up -d
+#
+# Key differences from development:
+# - No code volume mounts (baked into images)
+# - Multiple backend workers
+# - Nginx serves frontend static files
+# - Resource limits applied
+# - Database port not exposed externally
+# - Production-grade logging
+
+services:
+  # PostgreSQL database with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: youtube-qa-postgres-prod
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    # Database port NOT exposed externally for security
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - youtube-qa-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # FastAPI backend with multiple workers
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        WHISPER_MODEL: ${WHISPER_MODEL:-turbo}
+    container_name: youtube-qa-backend-prod
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      WHISPER_MODEL: ${WHISPER_MODEL}
+      STORAGE_PATH: /app/storage
+      CORS_ORIGINS: ${CORS_ORIGINS}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      # Only storage volumes, no code mounts
+      - audio_storage:/app/storage/audio
+      - thumbnail_storage:/app/storage/thumbnails
+      # ML model caches - persist downloaded models between builds
+      - whisper_cache:/app/.cache/torch
+      - huggingface_cache:/app/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Production command with multiple workers (no --reload)
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+    networks:
+      - youtube-qa-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # React frontend served by nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production  # Use production stage with nginx
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    container_name: youtube-qa-frontend-prod
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    # No volumes - static files baked into image
+    depends_on:
+      - backend
+    networks:
+      - youtube-qa-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Named volumes for data persistence
+volumes:
+  postgres_data:
+    driver: local
+  audio_storage:
+    driver: local
+  thumbnail_storage:
+    driver: local
+  # ML model caches - avoid re-downloading large models (Whisper ~1GB, embeddings ~500MB)
+  whisper_cache:
+    driver: local
+  huggingface_cache:
+    driver: local
+
+# Custom bridge network for inter-service communication
+networks:
+  youtube-qa-network:
+    driver: bridge
