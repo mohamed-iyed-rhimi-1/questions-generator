@@ -4,6 +4,9 @@ import { Toaster } from 'react-hot-toast'
 import { ErrorBoundary } from 'react-error-boundary'
 import { AlertCircle } from 'lucide-react'
 import { Dashboard } from '@/pages/Dashboard'
+import { Generations } from '@/pages/Generations'
+import { GenerationDetail } from '@/pages/GenerationDetail'
+import { Layout } from '@/components/Layout'
 
 // Error fallback component
 function ErrorFallback({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) {
@@ -31,14 +34,13 @@ function ErrorFallback({ error, resetErrorBoundary }: { error: Error; resetError
             Go to Home
           </button>
         </div>
-        {process.env.NODE_ENV === 'development' && (
-          <details className="mt-6">
-            <summary className="text-sm text-gray-600 cursor-pointer">Error details</summary>
-            <pre className="mt-2 text-xs bg-gray-100 p-3 rounded overflow-auto">
-              {error.stack}
-            </pre>
-          </details>
-        )}
+        {/* Development-only error details */}
+        <details className="mt-6">
+          <summary className="text-sm text-gray-600 cursor-pointer">Error details</summary>
+          <pre className="mt-2 text-xs bg-gray-100 p-3 rounded overflow-auto">
+            {error.stack}
+          </pre>
+        </details>
       </div>
     </div>
   );
@@ -50,9 +52,10 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 1000 * 60 * 5, // 5 minutes
       gcTime: 1000 * 60 * 10, // 10 minutes (formerly cacheTime)
-      retry: (failureCount, error: any) => {
+      retry: (failureCount, error: unknown) => {
         // Don't retry on 4xx errors (client errors)
-        if (error?.response?.status >= 400 && error?.response?.status < 500) {
+        const axiosError = error as { response?: { status?: number } };
+        if (axiosError?.response?.status && axiosError.response.status >= 400 && axiosError.response.status < 500) {
           return false;
         }
         // Retry up to 3 times for 5xx errors and network errors
@@ -62,7 +65,7 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
     },
     mutations: {
-      onError: (error: any) => {
+      onError: (error: unknown) => {
         console.error('Mutation error:', error);
       },
     },
@@ -80,9 +83,13 @@ function App() {
     >
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-          </Routes>
+          <Layout>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/generations" element={<Generations />} />
+              <Route path="/generations/:id" element={<GenerationDetail />} />
+            </Routes>
+          </Layout>
         </BrowserRouter>
         
         {/* Global toast notifications */}

@@ -1,8 +1,11 @@
 import { useState, useMemo, useEffect } from 'react'
-import { FileText, Loader2, CheckCircle2, AlertCircle, Eye, X, Database, Clock } from 'lucide-react'
+import { FileText, Loader2, CheckCircle2, AlertCircle, Eye, X, Database, Clock, Trash2, Video as VideoIcon } from 'lucide-react'
 import { useTranscribeVideos } from '@/hooks/useTranscribeVideos'
 import { useTranscriptions } from '@/hooks/useTranscriptions'
+import { useDeleteTranscription } from '@/hooks/useDeleteTranscription'
 import { TranscriptionModal } from '@/components/TranscriptionModal'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { EmptyState } from '@/components/EmptyState'
 import { Video, Transcription, TranscriptionResult } from '@/types'
 import { toast } from 'react-hot-toast'
 
@@ -26,12 +29,17 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [processingVideoIds, setProcessingVideoIds] = useState<Set<string>>(new Set())
   const [pendingVideoIds, setPendingVideoIds] = useState<Set<string>>(new Set())
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [transcriptionToDelete, setTranscriptionToDelete] = useState<{ id: number; videoId: string } | null>(null)
 
   // Fetch existing transcriptions
-  const { transcriptions, isLoading: isLoadingTranscriptions, refetch } = useTranscriptions()
+  const { transcriptions, refetch } = useTranscriptions()
 
   // Destructure transcription mutation hook
   const { transcribeVideos, isTranscribing, transcriptionResults, reset } = useTranscribeVideos()
+
+  // Delete transcription hook
+  const { deleteTranscription, isDeleting } = useDeleteTranscription()
 
   // Create lookup map for O(1) transcription lookup
   const videoIdToTranscription = useMemo(() => {
@@ -94,7 +102,8 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
       }, 1000)
       return () => clearTimeout(timer)
     }
-  }, [isTranscribing, pendingVideoIds, processingVideoIds, refetch])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTranscribing, pendingVideoIds.size, processingVideoIds.size])
 
   // View transcription handler
   const handleViewTranscription = (videoId: string, providedTranscription?: Transcription) => {
@@ -106,6 +115,26 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
       setModalVideoTitle(video?.title || videoId)
       setIsModalOpen(true)
     }
+  }
+
+  // Delete transcription handlers
+  const handleDeleteClick = (transcriptionId: number, videoId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setTranscriptionToDelete({ id: transcriptionId, videoId })
+    setDeleteConfirmOpen(true)
+  }
+
+  const handleDeleteConfirm = () => {
+    if (transcriptionToDelete) {
+      deleteTranscription(transcriptionToDelete.id)
+      setDeleteConfirmOpen(false)
+      setTranscriptionToDelete(null)
+    }
+  }
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirmOpen(false)
+    setTranscriptionToDelete(null)
   }
 
   // Clear/reset handler
@@ -157,10 +186,10 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
   }
 
   return (
-    <div className="card">
+    <div className="card responsive-card-padding" data-section="transcription">
       {/* Header */}
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Transcribe Videos</h2>
+      <div className="mb-4 sm:mb-6">
+        <h2 className="responsive-heading-2 font-bold text-gray-900 mb-2">Transcribe Videos</h2>
         <p className="text-gray-600 mb-1">
           Select videos to transcribe audio and generate embeddings for semantic search
         </p>
@@ -194,25 +223,37 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
 
         {/* Video list */}
         {videos.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            No videos available. Download videos first.
-          </div>
+          <EmptyState
+            icon={VideoIcon}
+            title="No videos available"
+            description="You need to download some videos before you can transcribe them. Head to the download section above to get started."
+            actionLabel="Scroll to Download"
+            onAction={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          />
         ) : (
           <div className="max-h-[400px] overflow-y-auto scrollbar-thin">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid responsive-grid-1-2-3 responsive-grid-gap">
               {videos.map((video) => {
                 const isSelected = selectedVideoIds.has(video.video_id)
+                const transcription = videoIdToTranscription.get(video.video_id)
+                const isDeletingThis = isDeleting && transcriptionToDelete?.videoId === video.video_id
 
                 return (
                   <div
                     key={video.video_id}
-                    className={`p-3 border rounded-lg cursor-pointer transition-all ${
+                    className={`p-3 border rounded-lg cursor-pointer transition-all relative ${
                       isSelected
-                        ? 'border-primary-500 bg-primary-50'
-                        : 'border-gray-200 hover:border-gray-300 bg-white'
-                    }`}
+                        ? 'border-primary-500 bg-primary-50 shadow-sm'
+                        : 'border-gray-200 hover:border-gray-300 hover:shadow-md bg-white'
+                    } ${isDeletingThis ? 'opacity-60 pointer-events-none' : ''}`}
                     onClick={() => handleVideoSelect(video.video_id)}
                   >
+                    {/* Loading overlay for deletion */}
+                    {isDeletingThis && (
+                      <div className="absolute inset-0 bg-white bg-opacity-50 rounded-lg flex items-center justify-center z-10">
+                        <Loader2 className="w-6 h-6 text-primary-600 animate-spin" />
+                      </div>
+                    )}
                     <div className="flex items-start gap-3">
                       {/* Checkbox */}
                       <input
@@ -227,31 +268,37 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
                       {/* Video info */}
                       <div className="flex-1 min-w-0">
                         {/* Thumbnail */}
-                        {video.thumbnail_url && (
+                        {video.thumbnail_url ? (
                           <img
                             src={video.thumbnail_url}
                             alt={video.title}
-                            className="w-full h-20 object-cover rounded mb-2"
+                            className="w-full h-20 object-cover rounded mb-2 transition-transform hover:scale-105"
+                            loading="lazy"
                           />
+                        ) : (
+                          <div className="w-full h-20 bg-gray-100 rounded mb-2 flex items-center justify-center">
+                            <FileText className="w-8 h-8 text-gray-400" />
+                          </div>
                         )}
 
                         {/* Title */}
-                        <p className="text-sm font-medium text-gray-900 truncate mb-1">
+                        <p className="text-sm font-semibold text-gray-900 truncate mb-1 hover:text-primary-600 transition-colors" title={video.title}>
                           {video.title}
                         </p>
 
                         {/* Video ID badge */}
-                        <p className="text-xs text-gray-500 font-mono truncate mb-2">
+                        <p className="text-xs text-gray-500 font-mono truncate mb-2" title={video.video_id}>
                           {video.video_id}
                         </p>
 
                         {/* Transcription status */}
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           {(() => {
                             const status = getVideoStatus(video.video_id)
+                            
                             if (status === 'pending') {
                               return (
-                                <span className="badge badge-warning text-xs flex items-center">
+                                <span className="badge badge-warning text-xs flex items-center font-medium">
                                   <Clock className="w-3 h-3 mr-1" />
                                   Pending
                                 </span>
@@ -259,16 +306,17 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
                             }
                             if (status === 'processing') {
                               return (
-                                <span className="badge badge-primary text-xs flex items-center">
+                                <span className="badge badge-primary text-xs flex items-center font-medium">
                                   <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                                   Processing
                                 </span>
                               )
                             }
-                            if (status === 'completed') {
+                            if (status === 'completed' && transcription) {
                               return (
                                 <>
-                                  <span className="badge badge-success text-xs">
+                                  <span className="badge badge-success text-xs flex items-center font-medium">
+                                    <CheckCircle2 className="w-3 h-3 mr-1" />
                                     Completed
                                   </span>
                                   <button
@@ -276,16 +324,31 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
                                       e.stopPropagation()
                                       handleViewTranscription(video.video_id)
                                     }}
-                                    className="text-xs text-primary-600 hover:text-primary-700 flex items-center"
+                                    disabled={isDeletingThis}
+                                    className="text-xs text-primary-600 hover:text-primary-700 hover:underline flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                                   >
                                     <Eye className="w-3 h-3 mr-1" />
                                     View
+                                  </button>
+                                  <button
+                                    onClick={(e) => handleDeleteClick(transcription.id, video.video_id, e)}
+                                    disabled={isDeletingThis}
+                                    className="text-xs text-red-600 hover:text-red-700 hover:underline flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                                    title="Delete transcription"
+                                  >
+                                    {isDeletingThis ? (
+                                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="w-3 h-3 mr-1" />
+                                    )}
+                                    Delete
                                   </button>
                                 </>
                               )
                             }
                             return (
-                              <span className="badge badge-gray text-xs">
+                              <span className="badge badge-gray text-xs flex items-center font-medium">
+                                <AlertCircle className="w-3 h-3 mr-1" />
                                 Not transcribed
                               </span>
                             )
@@ -302,11 +365,11 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
       </div>
 
       {/* Action buttons */}
-      <form onSubmit={handleSubmit} className="flex gap-3 mb-6">
+      <form onSubmit={handleSubmit} className="mobile-button-group mb-4 sm:mb-6">
         <button
           type="submit"
           disabled={isTranscribing || selectedVideoIds.size === 0}
-          className="btn btn-primary flex items-center"
+          className="btn btn-primary btn-touch flex items-center justify-center"
         >
           {isTranscribing ? (
             <>
@@ -316,7 +379,8 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
           ) : (
             <>
               <FileText className="w-4 h-4 mr-2" />
-              Transcribe Selected
+              <span className="hide-mobile">Transcribe Selected</span>
+              <span className="show-mobile">Transcribe</span>
             </>
           )}
         </button>
@@ -324,7 +388,7 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
         <button
           type="button"
           disabled={true}
-          className="btn btn-outline flex items-center opacity-60 cursor-not-allowed"
+          className="btn btn-outline btn-touch flex items-center justify-center opacity-60 cursor-not-allowed hide-mobile"
           title="Embeddings are automatically saved to vector database during transcription"
         >
           <Database className="w-4 h-4 mr-2" />
@@ -335,10 +399,11 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
           type="button"
           onClick={handleClear}
           disabled={isTranscribing}
-          className="btn btn-outline flex items-center"
+          className="btn btn-outline btn-touch flex items-center justify-center"
         >
           <X className="w-4 h-4 mr-2" />
-          Clear Selection
+          <span className="hide-mobile">Clear Selection</span>
+          <span className="show-mobile">Clear</span>
         </button>
       </form>
 
@@ -420,6 +485,19 @@ export function TranscriptionSection({ videos }: TranscriptionSectionProps) {
         onClose={() => setIsModalOpen(false)}
         transcription={modalTranscription}
         videoTitle={modalVideoTitle}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        title="Delete Transcription"
+        message={`Are you sure you want to delete the transcription for video "${transcriptionToDelete ? videos.find(v => v.video_id === transcriptionToDelete.videoId)?.title || transcriptionToDelete.videoId : ''}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={handleDeleteConfirm}
+        onCancel={handleDeleteCancel}
+        isLoading={isDeleting}
       />
     </div>
   )

@@ -72,7 +72,7 @@ function getErrorMessage(error: AxiosError): string {
   // Fallback to generic messages
   return (
     errorData?.message ||
-    error.response?.data?.detail ||
+    (errorData?.detail as string) ||
     error.message ||
     'An unexpected error occurred'
   );

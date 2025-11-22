@@ -21,6 +21,10 @@ class TranscriptionResponse(BaseModel):
     vector_embedding: Optional[List[float]] = None
     created_at: datetime
     status: str = "completed"
+    
+    # Chunk support fields
+    chunk_based: bool = False
+    chunks_processed: int = 0
 
 
 class TranscriptionResult(BaseModel):

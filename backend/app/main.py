@@ -13,7 +13,7 @@ from app.api import api_router
 from app.config import settings
 from app.database import engine
 from app.logging_config import setup_logging
-from app.exceptions import AppException, to_http_exception
+from app.exceptions import AppException, DependencyException, to_http_exception
 
 # Configure logging
 setup_logging()
@@ -31,11 +31,31 @@ async def lifespan(app: FastAPI):
         "🚀 Application startup",
         extra={
             "database_url": settings.database_url,
-            "ollama_base_url": settings.ollama_base_url,
-            "ollama_model": settings.ollama_model,
-            "whisper_model": settings.whisper_model,
+            "transcription_provider": settings.transcription_provider,
+            "transcription_model": settings.groq_model if settings.transcription_provider == "groq" else settings.whisper_model,
+            "question_generation_provider": settings.question_generation_provider,
+            "question_generation_model": settings.openrouter_model if settings.question_generation_provider == "openrouter" else settings.ollama_model,
             "embedding_model": "all-MiniLM-L6-v2",
             "embedding_dim": 384
+        }
+    )
+    
+    # Log active provider configuration
+    logger.info(
+        f"📡 Transcription provider: {settings.transcription_provider}",
+        extra={
+            "provider": settings.transcription_provider,
+            "model": settings.groq_model if settings.transcription_provider == "groq" else settings.whisper_model,
+            "api_key_configured": bool(settings.groq_api_key) if settings.transcription_provider == "groq" else "N/A"
+        }
+    )
+    
+    logger.info(
+        f"🤖 Question generation provider: {settings.question_generation_provider}",
+        extra={
+            "provider": settings.question_generation_provider,
+            "model": settings.openrouter_model if settings.question_generation_provider == "openrouter" else settings.ollama_model,
+            "api_key_configured": bool(settings.openrouter_api_key) if settings.question_generation_provider == "openrouter" else "N/A"
         }
     )
     
@@ -54,74 +74,81 @@ async def lifespan(app: FastAPI):
             exc_info=True
         )
     
-    # Verify transcription models loaded
+    # Verify transcription provider loaded
     try:
-        from app.services.transcription_service import whisper_model, embedding_model
-        if whisper_model is None:
+        from app.services.transcription_service import transcription_provider
+        if transcription_provider is None:
             logger.warning(
-                "⚠️  Whisper model failed to load",
-                extra={"service": "transcription", "model": settings.whisper_model}
+                "⚠️  Transcription provider failed to initialize",
+                extra={
+                    "service": "transcription",
+                    "provider": settings.transcription_provider,
+                    "status": "unavailable"
+                }
             )
-        if embedding_model is None:
-            logger.warning(
-                "⚠️  Embedding model failed to load",
-                extra={"service": "embedding", "model": "all-MiniLM-L6-v2"}
+        else:
+            logger.info(
+                "✅ Transcription provider initialized",
+                extra={
+                    "provider": settings.transcription_provider,
+                    "status": "available"
+                }
             )
+        
+        # Note: Embedding model is lazy-loaded on first use for faster startup
+        logger.info(
+            "📦 Embedding model will load on first use",
+            extra={"model": settings.embedding_model_name, "dim": settings.embedding_dim}
+        )
     except Exception as e:
         logger.warning(
-            "⚠️  Could not verify transcription models",
+            "⚠️  Could not verify transcription provider",
             extra={"error": str(e)}
         )
     
-    # Verify Ollama client loaded
+    # Verify question generation provider loaded
     try:
-        from app.services.ollama_service import ollama_client
-        if ollama_client is None:
-            logger.warning(
-                "⚠️  Ollama client failed to initialize - question generation will be unavailable",
-                extra={"service": "ollama", "status": "unavailable"}
-            )
-        else:
-            # Try to verify connection with non-blocking check
-            try:
-                # Use asyncio timeout for non-blocking check
-                import asyncio
-                
-                async def check_ollama():
-                    # Run in executor to avoid blocking
-                    loop = asyncio.get_event_loop()
-                    return await loop.run_in_executor(None, ollama_client.list)
-                
-                try:
-                    # 3-second timeout for health check
-                    await asyncio.wait_for(check_ollama(), timeout=3.0)
-                    logger.info(
-                        "✅ Ollama connection successful",
-                        extra={
-                            "service": "ollama",
-                            "model": settings.ollama_model,
-                            "status": "available"
-                        }
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "⚠️  Ollama health check timed out - service may be slow or unavailable",
-                        extra={"service": "ollama", "status": "degraded", "timeout_seconds": 3}
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "⚠️  Ollama connection failed",
-                        extra={"service": "ollama", "status": "degraded", "error": str(e)}
-                    )
-            except Exception as e:
-                logger.warning(
-                    "⚠️  Could not perform Ollama health check",
-                    extra={"service": "ollama", "error": str(e)}
+        from app.services.ollama_service import check_ollama_health
+        
+        # Use asyncio for non-blocking health check
+        import asyncio
+        
+        async def check_provider_health():
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, check_ollama_health)
+        
+        try:
+            # 3-second timeout for health check
+            is_healthy = await asyncio.wait_for(check_provider_health(), timeout=3.0)
+            if is_healthy:
+                logger.info(
+                    "✅ Question generation provider healthy",
+                    extra={
+                        "provider": settings.question_generation_provider,
+                        "status": "available"
+                    }
                 )
+            else:
+                logger.warning(
+                    "⚠️  Question generation provider unhealthy",
+                    extra={
+                        "provider": settings.question_generation_provider,
+                        "status": "degraded"
+                    }
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "⚠️  Question generation provider health check timed out",
+                extra={
+                    "provider": settings.question_generation_provider,
+                    "status": "degraded",
+                    "timeout_seconds": 3
+                }
+            )
     except Exception as e:
         logger.warning(
-            "⚠️  Could not verify Ollama client",
-            extra={"service": "ollama", "error": str(e)}
+            "⚠️  Could not verify question generation provider",
+            extra={"provider": settings.question_generation_provider, "error": str(e)}
         )
     
     yield
@@ -154,12 +181,39 @@ app.include_router(api_router)
 
 
 # Global exception handlers
+@app.exception_handler(DependencyException)
+async def dependency_exception_handler(request: Request, exc: DependencyException):
+    """Handle dependency violation exceptions (409 Conflict)."""
+    logger.warning(
+        f"Dependency violation: {exc.detail['message']}",
+        extra={
+            "error": "dependency_violation",
+            "details": exc.detail.get('details', {}),
+            "dependent_resources": exc.detail.get('dependent_resources', [])
+        }
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.detail
+    )
+
+
 @app.exception_handler(AppException)
 async def app_exception_handler(request: Request, exc: AppException):
     """Handle custom application exceptions."""
+    # Build logging context with provider information if available
+    log_extra = {
+        "error_code": exc.error_code,
+        "details": exc.details
+    }
+    
+    # Add provider context for provider-specific exceptions
+    if hasattr(exc, 'provider'):
+        log_extra['provider'] = exc.provider
+    
     logger.error(
         f"Application error: {exc.error_code} - {exc.message}",
-        extra={"error_code": exc.error_code, "details": exc.details}
+        extra=log_extra
     )
     http_exc = to_http_exception(exc)
     return JSONResponse(

@@ -13,6 +13,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from app.config import settings
 from app.models.video import Video
 from app.exceptions import VideoDownloadException, DatabaseException
+from app.services.chunk_service import should_create_chunks, create_chunks_for_video
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ def extract_video_metadata(url: str) -> Dict[str, Any]:
     retry=retry_if_exception_type((DownloadError, ConnectionError))
 )
 def download_audio_as_mp3(url: str, video_id: str) -> Optional[str]:
-    """Download video audio and convert to MP3 with embedded thumbnail. Retries up to 3 times."""
+    """Download video audio and convert to WAV (lossless, better for Whisper). Retries up to 3 times."""
     audio_path = settings.audio_storage_path
     
     # Check available disk space (require at least 10MB)
@@ -146,8 +147,7 @@ def download_audio_as_mp3(url: str, video_id: str) -> Optional[str]:
         'postprocessors': [
             {
                 'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
+                'preferredcodec': 'wav',  # WAV is lossless and more reliable for Whisper
             },
             {
                 'key': 'FFmpegMetadata',
@@ -156,7 +156,7 @@ def download_audio_as_mp3(url: str, video_id: str) -> Optional[str]:
             # The thumbnail will be saved separately instead
         ],
         'postprocessor_args': [
-            '-ar', '16000',  # Changed to 16kHz to match Whisper's expected sample rate
+            '-ar', '16000',  # 16kHz to match Whisper's expected sample rate
             '-ac', '1',  # Mono audio (Whisper converts to mono anyway)
         ],
         'noprogress': True,
@@ -164,7 +164,7 @@ def download_audio_as_mp3(url: str, video_id: str) -> Optional[str]:
         'fragment_retries': 3,  # Retry failed fragments
     })
     
-    output_file = audio_path / f'{video_id}.mp3'
+    output_file = audio_path / f'{video_id}.wav'
     
     try:
         logger.info(f"Starting audio download for video: {video_id}")
@@ -403,6 +403,27 @@ def process_video_url(url: str, session: Session) -> Dict[str, Any]:
         # Step 6: Save to database
         logger.info(f"Saving {video_id} to database")
         video, is_new = save_video_to_db(session, video_data)
+        
+        # Step 6.5: Create chunks if needed (after video is saved to database)
+        if settings.auto_chunk_enabled and file_path and is_new:
+            try:
+                if should_create_chunks(file_path, settings.max_chunk_size_mb):
+                    logger.info(f"File size exceeds threshold, creating chunks for {video_id}")
+                    chunks = create_chunks_for_video(
+                        video_id,
+                        file_path,
+                        settings.max_chunk_size_mb,
+                        session
+                    )
+                    logger.info(f"Successfully created {len(chunks)} chunks for video {video_id}")
+                else:
+                    logger.debug(f"File size below threshold, skipping chunk creation for {video_id}")
+            except Exception as e:
+                # Log error but don't fail the download - chunks are optional
+                logger.error(
+                    f"Failed to create chunks for {video_id}: {e}",
+                    extra={"video_id": video_id, "error": str(e), "error_type": type(e).__name__}
+                )
         
         # Step 7: Return result
         if is_new:

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 
 class DownloadVideosRequest(BaseModel):
@@ -22,6 +22,10 @@ class VideoResponse(BaseModel):
     file_path: Optional[str] = None
     created_at: datetime
     download_status: str = "completed"
+    
+    # Chunk support fields
+    has_chunks: bool = False
+    chunk_count: int = 0
 
 
 class DownloadResult(BaseModel):
@@ -41,3 +45,13 @@ class DownloadVideosResponse(BaseModel):
     successful: int
     duplicates: int
     failed: int
+
+
+class DependencyErrorResponse(BaseModel):
+    """Response schema for dependency violation errors (409 Conflict)."""
+    error: str = Field(default="dependency_violation", description="Error type identifier")
+    message: str = Field(description="Human-readable error message")
+    details: Dict[str, Any] = Field(description="Additional error details")
+    dependent_resources: List[Dict[str, Any]] = Field(
+        description="List of dependent resources preventing deletion"
+    )

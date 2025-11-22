@@ -44,22 +44,22 @@ export const QuestionCard = ({ question, index }: QuestionCardProps) => {
   };
 
   return (
-    <article className="card p-6">
+    <article className="card responsive-card-padding" aria-label={`Question ${index !== undefined ? index + 1 : ''}`}>
       {/* Header section */}
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" role="group" aria-label="Question metadata">
           {index !== undefined && (
-            <span className="badge badge-primary">
+            <span className="badge badge-primary" aria-label={`Question number ${index + 1}`}>
               Question {index + 1}
             </span>
           )}
           {question.difficulty && (
-            <span className={getDifficultyClass()}>
+            <span className={getDifficultyClass()} aria-label={`Difficulty: ${question.difficulty}`}>
               {question.difficulty}
             </span>
           )}
           {question.question_type && (
-            <span className="badge badge-gray flex items-center">
+            <span className="badge badge-gray flex items-center" aria-label={`Type: ${question.question_type}`}>
               {getTypeIcon()}
               {question.question_type}
             </span>
@@ -68,29 +68,29 @@ export const QuestionCard = ({ question, index }: QuestionCardProps) => {
       </div>
 
       {/* Question text section */}
-      <div className="text-lg font-medium text-gray-900 mt-3 mb-2">
+      <div className="text-base sm:text-lg font-medium text-gray-900 mt-3 mb-2" role="heading" aria-level={3}>
         {question.question_text}
       </div>
 
       {/* Context section */}
       {question.context && (
-        <div className="mt-2">
-          <span className="text-sm font-medium text-gray-700">Context:</span>
-          <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-200 mt-1 italic">
+        <div className="mt-2" role="region" aria-label="Question context">
+          <span className="text-sm font-medium text-gray-700" id={`context-label-${question.id}`}>Context:</span>
+          <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-200 mt-1 italic" aria-labelledby={`context-label-${question.id}`}>
             {question.context}
           </div>
         </div>
       )}
 
       {/* Footer section */}
-      <div className="text-xs text-gray-500 mt-3 flex items-center gap-2 flex-wrap">
-        <span className="badge badge-gray text-xs font-mono">
+      <div className="text-xs text-gray-500 mt-3 flex items-center gap-2 flex-wrap" role="contentinfo" aria-label="Question metadata">
+        <span className="badge badge-gray text-xs font-mono" aria-label={`Video ID: ${question.video_id}`}>
           {question.video_id}
         </span>
-        <span>•</span>
-        <span>
+        <span aria-hidden="true">•</span>
+        <time dateTime={question.created_at} aria-label={`Created at ${new Date(question.created_at).toLocaleString()}`}>
           {new Date(question.created_at).toLocaleString()}
-        </span>
+        </time>
       </div>
     </article>
   );

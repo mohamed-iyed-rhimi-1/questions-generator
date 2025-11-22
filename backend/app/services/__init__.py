@@ -15,6 +15,11 @@ from app.services.ollama_service import (
     retrieve_transcriptions_for_videos,
     check_ollama_health,
 )
+from app.services.chunk_service import (
+    create_chunks_for_video,
+    get_chunks_for_video,
+    delete_chunks_for_video,
+)
 
 __all__ = [
     "process_video_url",
@@ -28,4 +33,7 @@ __all__ = [
     "generate_questions_with_ollama",
     "retrieve_transcriptions_for_videos",
     "check_ollama_health",
+    "create_chunks_for_video",
+    "get_chunks_for_video",
+    "delete_chunks_for_video",
 ]

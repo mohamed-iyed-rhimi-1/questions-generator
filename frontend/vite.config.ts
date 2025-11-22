@@ -18,6 +18,13 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       host: true,
+      // Allow ngrok and other tunneling services
+      allowedHosts: [
+        'localhost',
+        '.ngrok-free.app',
+        '.ngrok.io',
+        '.loca.lt',
+      ],
       // Proxy API requests from browser to backend
       // This allows the browser to make requests to http://localhost:5173/api/...
       // which Vite proxies to the backend service in Docker network

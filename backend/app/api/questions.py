@@ -23,6 +23,8 @@ from app.schemas import (
 )
 from app.models.transcription import Transcription
 from app.models.video import Video
+from app.models.generation import Generation
+from app.models.question import Question
 from app.services import generate_questions_with_ollama, retrieve_transcriptions_for_videos, check_ollama_health
 
 
@@ -43,14 +45,15 @@ def generate_questions(
     Generate questions from transcribed videos using Ollama LLM.
     
     Validates that videos are downloaded and transcribed, then uses AI to generate
-    educational questions from the transcription text.
+    educational questions from the transcription text. Creates a Generation record
+    and saves all questions to the database.
     
     Args:
-        request: Request containing list of video IDs
+        request: Request containing list of video IDs and question_count
         db: Database session
     
     Returns:
-        GenerateQuestionsResponse with per-video results and summary statistics
+        GenerateQuestionsResponse with per-video results, summary statistics, and generation_id
     
     Raises:
         HTTPException: If no video IDs provided or internal error occurs
@@ -71,7 +74,7 @@ def generate_questions(
                     details={"video_id": video_id, "expected": "non-empty string"}
                 )
         
-        logger.info(f"Received question generation request for {len(request.video_ids)} videos")
+        logger.info(f"Received question generation request for {len(request.video_ids)} videos with {request.question_count} questions")
         
         # Deduplicate video_ids while preserving order
         seen = set()
@@ -81,11 +84,23 @@ def generate_questions(
                 seen.add(video_id)
                 unique_video_ids.append(video_id)
         
+        # Create Generation record before generating questions
+        generation = Generation(
+            video_ids=unique_video_ids,
+            question_count=0  # Will be updated after generation
+        )
+        db.add(generation)
+        db.flush()  # Get the generation ID without committing
+        
+        logger.info(f"Created generation record with ID: {generation.id}")
+        
         # Batch fetch all transcriptions up-front to avoid N+1 queries
         transcriptions_dict = retrieve_transcriptions_for_videos(unique_video_ids, db)
         
         # Process each video_id
         results = []
+        all_generated_questions = []  # Track all questions for database storage
+        order_index = 0  # Global order index across all videos
         
         for video_id in unique_video_ids:
             # Query video
@@ -120,12 +135,12 @@ def generate_questions(
                 results.append(result)
                 continue
             
-            # Generate questions using Ollama
+            # Generate questions using Ollama with question_count parameter
             try:
                 questions = generate_questions_with_ollama(
                     video_id=video_id,
                     transcription_text=transcription.transcription_text,
-                    question_count=5,
+                    question_count=request.question_count,
                     embedding_vector=transcription.vector_embedding
                 )
                 
@@ -136,15 +151,30 @@ def generate_questions(
                         status="failed",
                         message="No questions generated",
                         error="Ollama returned no valid questions",
-                        questions=[],
+                        questions=None,
                         question_count=0
                     )
                 else:
+                    # Save questions to database with generation_id and order_index
+                    for question_response in questions:
+                        question_model = Question(
+                            generation_id=generation.id,
+                            video_id=video_id,
+                            question_text=question_response.question_text,
+                            context=question_response.context,
+                            difficulty=question_response.difficulty,
+                            question_type=question_response.question_type,
+                            order_index=order_index
+                        )
+                        db.add(question_model)
+                        all_generated_questions.append(question_model)
+                        order_index += 1
+                    
                     result = QuestionGenerationResult(
                         video_id=video_id,
                         status="success",
                         message=f"Generated {len(questions)} questions using Ollama",
-                        questions=questions,
+                        questions=None,  # Don't return questions in result, they're saved to DB
                         question_count=len(questions),
                         error=None
                     )
@@ -158,10 +188,18 @@ def generate_questions(
                     status="failed",
                     message="AI service unavailable",
                     error=e.message,
-                    questions=[],
+                    questions=None,
                     question_count=0
                 )
                 results.append(result)
+        
+        # Update generation question_count
+        generation.question_count = len(all_generated_questions)
+        
+        # Commit all changes (generation + questions)
+        db.commit()
+        
+        logger.info(f"Saved {len(all_generated_questions)} questions to database for generation {generation.id}")
         
         # Calculate summary statistics
         total = len(results)
@@ -170,20 +208,21 @@ def generate_questions(
         failed = sum(1 for r in results if r.status == "failed")
         total_questions = sum(r.question_count for r in results)
         
-        # Create response
+        # Create response with generation_id
         response = GenerateQuestionsResponse(
             results=results,
             total=total,
             successful=successful,
             failed=failed,
             no_transcription=no_transcription,
-            total_questions=total_questions
+            total_questions=total_questions,
+            generation_id=generation.id
         )
         
         logger.info(
             f"Question generation complete: {successful} successful, "
             f"{failed} failed, {no_transcription} no transcription, "
-            f"{total_questions} total questions"
+            f"{total_questions} total questions, generation_id={generation.id}"
         )
         
         return response
@@ -195,6 +234,7 @@ def generate_questions(
         raise
     except Exception as e:
         logger.exception("Unexpected error during question generation")
+        db.rollback()  # Rollback on error
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error during question generation"

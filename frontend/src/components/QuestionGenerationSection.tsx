@@ -9,6 +9,7 @@ import { Sparkles, Loader2, CheckCircle2, AlertCircle, FileQuestion, X } from 'l
 import { useGenerateQuestions } from '@/hooks/useGenerateQuestions';
 import { useTranscriptions } from '@/hooks/useTranscriptions';
 import { QuestionCard } from '@/components/QuestionCard';
+import { EmptyState } from '@/components/EmptyState';
 import { Video, Question, QuestionGenerationResult } from '@/types';
 
 interface QuestionGenerationSectionProps {
@@ -22,6 +23,7 @@ export const QuestionGenerationSection = ({ videos }: QuestionGenerationSectionP
   const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set());
   const [showResults, setShowResults] = useState(false);
   const [allGeneratedQuestions, setAllGeneratedQuestions] = useState<Question[]>([]);
+  const [questionCount, setQuestionCount] = useState<number>(10);
 
   // Fetch existing transcriptions
   const { transcriptions } = useTranscriptions();
@@ -85,6 +87,12 @@ export const QuestionGenerationSection = ({ videos }: QuestionGenerationSectionP
       return;
     }
 
+    // Validate question count
+    if (questionCount < 1 || questionCount > 50) {
+      toast.error('Question count must be between 1 and 50');
+      return;
+    }
+
     // Validate that selected videos have transcriptions
     const selectedArray = Array.from(selectedVideoIds);
     const missingTranscriptions = selectedArray.filter(
@@ -97,7 +105,7 @@ export const QuestionGenerationSection = ({ videos }: QuestionGenerationSectionP
     }
 
     // Generate questions
-    generateQuestions(selectedArray);
+    generateQuestions(selectedArray, questionCount);
     setShowResults(true);
   };
 
@@ -172,9 +180,19 @@ export const QuestionGenerationSection = ({ videos }: QuestionGenerationSectionP
         {/* Video list */}
         <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
           {getTranscribedVideos.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">
-              <FileQuestion className="w-12 h-12 mx-auto mb-3 text-gray-400" />
-              <p>No transcribed videos available. Transcribe videos first.</p>
+            <div className="p-4">
+              <EmptyState
+                icon={FileQuestion}
+                title="No transcribed videos"
+                description="You need to transcribe videos before generating questions. Select videos in the transcription section above."
+                actionLabel="Scroll to Transcription"
+                onAction={() => {
+                  const transcriptionSection = document.querySelector('[data-section="transcription"]');
+                  if (transcriptionSection) {
+                    transcriptionSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }
+                }}
+              />
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
@@ -229,6 +247,37 @@ export const QuestionGenerationSection = ({ videos }: QuestionGenerationSectionP
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Question count input */}
+      <div className="mb-6">
+        <label htmlFor="question-count" className="block text-sm font-medium text-gray-700 mb-2">
+          Number of Questions
+        </label>
+        <div className="flex items-start gap-3">
+          <div className="flex-shrink-0">
+            <input
+              id="question-count"
+              type="number"
+              min={1}
+              max={50}
+              value={questionCount}
+              onChange={(e) => {
+                const value = parseInt(e.target.value);
+                if (!isNaN(value)) {
+                  setQuestionCount(value);
+                }
+              }}
+              disabled={isGenerating}
+              className="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+            />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm text-gray-600">
+              Generate 1-50 questions per video
+            </p>
+          </div>
         </div>
       </div>
 

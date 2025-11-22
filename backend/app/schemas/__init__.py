@@ -16,6 +16,17 @@ from app.schemas.question import (
     QuestionResponse,
     QuestionGenerationResult,
     GenerateQuestionsResponse,
+    UpdateQuestionRequest,
+    UpdateQuestionsOrderRequest,
+)
+from app.schemas.generation import (
+    GenerationBase,
+    GenerationResponse,
+    GenerationDetailResponse,
+    GenerationListResponse,
+)
+from app.schemas.chunk import (
+    ChunkResponse,
 )
 
 __all__ = [
@@ -32,4 +43,11 @@ __all__ = [
     "QuestionResponse",
     "QuestionGenerationResult",
     "GenerateQuestionsResponse",
+    "UpdateQuestionRequest",
+    "UpdateQuestionsOrderRequest",
+    "GenerationBase",
+    "GenerationResponse",
+    "GenerationDetailResponse",
+    "GenerationListResponse",
+    "ChunkResponse",
 ]

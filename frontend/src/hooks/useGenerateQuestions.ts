@@ -3,13 +3,14 @@
  * Follows the useTranscribeVideos pattern.
  */
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { api } from '@/lib/axios';
 import { GenerateQuestionsResponse } from '@/types';
 
 interface UseGenerateQuestionsReturn {
-  generateQuestions: (videoIds: string[]) => void;
+  generateQuestions: (videoIds: string[], questionCount?: number) => void;
   isGenerating: boolean;
   questionResults: GenerateQuestionsResponse | undefined;
   error: Error | null;
@@ -22,22 +23,27 @@ interface UseGenerateQuestionsReturn {
  * @returns Mutation functions and state for question generation
  */
 export const useGenerateQuestions = (): UseGenerateQuestionsReturn => {
-  const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const mutation = useMutation({
-    mutationFn: async (video_ids: string[]) => {
+    mutationFn: async ({ video_ids, question_count }: { video_ids: string[]; question_count?: number }) => {
       const response = await api.post<GenerateQuestionsResponse>(
         '/questions/generate',
-        { video_ids }
+        { video_ids, question_count: question_count || 10 }
       );
       return response.data;
     },
     onSuccess: (data: GenerateQuestionsResponse) => {
-      // Show success toast with summary statistics
+      // Show success toast with summary statistics and navigation info
       toast.success(
         `Generated ${data.total_questions} question(s) from ${data.successful} video(s). ` +
-        `${data.failed} failed, ${data.no_transcription} no transcription.`
+        `Redirecting to generation details...`
       );
+      
+      // Navigate to generation detail page if generation_id is present
+      if (data.generation_id) {
+        navigate(`/generations/${data.generation_id}`);
+      }
       
       // Note: No cache invalidation needed since questions are transient (not cached)
     },
@@ -48,7 +54,8 @@ export const useGenerateQuestions = (): UseGenerateQuestionsReturn => {
   });
 
   return {
-    generateQuestions: mutation.mutate,
+    generateQuestions: (videoIds: string[], questionCount?: number) => 
+      mutation.mutate({ video_ids: videoIds, question_count: questionCount }),
     isGenerating: mutation.isPending,
     questionResults: mutation.data,
     error: mutation.error,

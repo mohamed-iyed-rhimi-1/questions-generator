@@ -106,18 +106,38 @@ export interface TranscriptionListResponse {
 /**
  * Question entity
  * Matches backend QuestionResponse schema
- * Note: Questions are currently placeholder/mock data.
- * Ollama integration will replace placeholder generation in next phase.
- * Questions are transient (not persisted to database yet).
  */
 export interface Question {
-  id: string;
+  id: number;
+  generation_id: number;
   video_id: string;
   question_text: string;
   context?: string;
   difficulty?: string;
   question_type?: string;
+  order_index: number;
   created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Request for updating a question
+ * Matches backend UpdateQuestionRequest schema
+ */
+export interface UpdateQuestionRequest {
+  question_text?: string;
+  context?: string;
+  difficulty?: string;
+  question_type?: string;
+  order_index?: number;
+}
+
+/**
+ * Request for reordering questions
+ * Matches backend UpdateQuestionsOrderRequest schema
+ */
+export interface UpdateQuestionsOrderRequest {
+  question_ids: number[];
 }
 
 /**
@@ -144,4 +164,54 @@ export interface GenerateQuestionsResponse {
   failed: number;
   no_transcription: number;
   total_questions: number;
+  generation_id?: number;
+}
+
+/**
+ * Generation entity
+ * Matches backend GenerationResponse schema
+ */
+export interface Generation {
+  id: number;
+  video_ids: string[];
+  question_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Generation detail with questions
+ * Matches backend GenerationDetailResponse schema
+ */
+export interface GenerationDetailResponse extends Generation {
+  questions: Question[];
+}
+
+/**
+ * Response from GET /api/generations endpoint
+ * Matches backend GenerationListResponse schema
+ */
+export interface GenerationListResponse {
+  generations: Generation[];
+  total: number;
+}
+
+/**
+ * Response type alias for QuestionResponse
+ * Matches backend QuestionResponse schema
+ */
+export type QuestionResponse = Question;
+
+/**
+ * Dependency error response
+ * Returned when deletion fails due to dependent resources
+ */
+export interface DependencyError {
+  error: 'dependency_violation';
+  message: string;
+  details: Record<string, any>;
+  dependent_resources: Array<{
+    type: string;
+    id: number | string;
+  }>;
 }

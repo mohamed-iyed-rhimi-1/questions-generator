@@ -28,6 +28,18 @@ class Settings(BaseSettings):
     # Whisper configuration
     whisper_model: str = Field(default="turbo", env="WHISPER_MODEL")
     
+    # Transcription provider configuration
+    transcription_provider: str = Field(default="groq", env="TRANSCRIPTION_PROVIDER")
+    groq_api_key: str = Field(default="", env="GROQ_API_KEY")
+    groq_model: str = Field(default="whisper-large-v3", env="GROQ_MODEL")
+    
+    # Question generation provider configuration
+    question_generation_provider: str = Field(default="openrouter", env="QUESTION_GENERATION_PROVIDER")
+    openrouter_api_key: str = Field(default="", env="OPENROUTER_API_KEY")
+    openrouter_model: str = Field(default="openai/gpt-4o-mini", env="OPENROUTER_MODEL")
+    openrouter_site_url: str = Field(default="", env="OPENROUTER_SITE_URL")
+    openrouter_site_name: str = Field(default="", env="OPENROUTER_SITE_NAME")
+    
     # Embedding configuration
     embedding_model_name: str = Field(
         default="sentence-transformers/all-MiniLM-L6-v2",
@@ -37,6 +49,13 @@ class Settings(BaseSettings):
     
     # Storage configuration
     storage_path: str = Field(default="./storage", env="STORAGE_PATH")
+    
+    # Chunk configuration
+    max_chunk_size_mb: float = Field(default=25.0, env="MAX_CHUNK_SIZE_MB")
+    silence_threshold_db: int = Field(default=-35, env="SILENCE_THRESHOLD_DB")
+    min_silence_duration: float = Field(default=0.3, env="MIN_SILENCE_DURATION")
+    auto_chunk_enabled: bool = Field(default=True, env="AUTO_CHUNK_ENABLED")
+    delete_original_after_chunking: bool = Field(default=False, env="DELETE_ORIGINAL_AFTER_CHUNKING")
     
     # CORS configuration (stored as string, parsed in model_validator)
     cors_origins: str = Field(
@@ -62,9 +81,38 @@ class Settings(BaseSettings):
             ]
         return self
     
+    @model_validator(mode='after')
+    def validate_api_keys(self):
+        """Validate that required API keys are present for selected providers."""
+        if self.transcription_provider == 'groq' and not self.groq_api_key:
+            raise ValueError("GROQ_API_KEY is required when TRANSCRIPTION_PROVIDER is 'groq'")
+        if self.question_generation_provider == 'openrouter' and not self.openrouter_api_key:
+            raise ValueError("OPENROUTER_API_KEY is required when QUESTION_GENERATION_PROVIDER is 'openrouter'")
+        return self
+    
     def get_cors_origins(self) -> List[str]:
         """Get parsed CORS origins as a list."""
         return self._cors_origins_list if self._cors_origins_list else ["http://localhost:5173", "http://localhost:3000"]
+    
+    @field_validator('transcription_provider')
+    @classmethod
+    def validate_transcription_provider(cls, v: str) -> str:
+        """Validate transcription provider is one of the allowed values."""
+        allowed = ['whisper', 'groq']
+        v_lower = v.lower()
+        if v_lower not in allowed:
+            raise ValueError(f"transcription_provider must be one of {allowed}, got {v}")
+        return v_lower
+    
+    @field_validator('question_generation_provider')
+    @classmethod
+    def validate_question_generation_provider(cls, v: str) -> str:
+        """Validate question generation provider is one of the allowed values."""
+        allowed = ['ollama', 'openrouter']
+        v_lower = v.lower()
+        if v_lower not in allowed:
+            raise ValueError(f"question_generation_provider must be one of {allowed}, got {v}")
+        return v_lower
     
     @field_validator('log_level')
     @classmethod
@@ -94,6 +142,13 @@ class Settings(BaseSettings):
     def thumbnail_storage_path(self) -> Path:
         """Computed path for thumbnail storage."""
         path = Path(self.storage_path) / "thumbnails"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    
+    @property
+    def chunk_storage_path(self) -> Path:
+        """Computed path for chunk file storage."""
+        path = Path(self.storage_path) / "audio" / "chunks"
         path.mkdir(parents=True, exist_ok=True)
         return path
 

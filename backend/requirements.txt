@@ -20,3 +20,5 @@ aiofiles==23.2.1
 httpx==0.25.2
 torch>=2.0.0  # Add explicit torch version
 torchaudio>=2.0.0  # Required for Whisper audio processing
+groq>=0.35.0  # Groq API client for transcription (audio API support)
+requests>=2.31.0  # HTTP client for OpenRouter API calls

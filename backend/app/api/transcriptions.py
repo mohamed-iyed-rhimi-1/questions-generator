@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 import logging
 
 from app.database import get_db
-from app.exceptions import ValidationException, DatabaseException
+from app.exceptions import ValidationException, DatabaseException, DependencyException
 from app.schemas import (
     TranscribeVideosRequest,
     TranscribeVideosResponse,
@@ -14,6 +14,7 @@ from app.schemas import (
 )
 from app.models.transcription import Transcription
 from app.models.video import Video
+from app.models.generation import Generation
 from app.services import process_multiple_transcriptions
 
 # Create router and logger
@@ -69,7 +70,23 @@ def transcribe_videos(
             # Convert ORM object to Pydantic schema if present
             transcription_response = None
             if result.get('transcription'):
-                transcription_response = TranscriptionResponse.model_validate(result['transcription'])
+                transcription = result['transcription']
+                # Ensure chunks relationship is loaded
+                if transcription.chunks is None:
+                    # Refresh to load chunks if not already loaded
+                    db.refresh(transcription, ['chunks'])
+                
+                transcription_dict = {
+                    'id': transcription.id,
+                    'video_id': transcription.video_id,
+                    'transcription_text': transcription.transcription_text,
+                    'vector_embedding': transcription.vector_embedding,
+                    'created_at': transcription.created_at,
+                    'status': 'completed',
+                    'chunk_based': len(transcription.chunks) > 0 if transcription.chunks else False,
+                    'chunks_processed': len(transcription.chunks) if transcription.chunks else 0
+                }
+                transcription_response = TranscriptionResponse(**transcription_dict)
             
             transcription_results.append(
                 TranscriptionResult(
@@ -148,13 +165,27 @@ def list_transcriptions(
         # Get total count
         total = query.count()
         
-        # Order by creation date (newest first) and apply pagination
-        transcriptions = query.order_by(
+        # Order by creation date (newest first) and apply pagination with eager loading
+        transcriptions = query.options(
+            joinedload(Transcription.chunks)
+        ).order_by(
             Transcription.created_at.desc()
         ).offset(skip).limit(limit).all()
         
-        # Convert ORM objects to Pydantic schemas
-        transcription_list = [TranscriptionResponse.model_validate(t) for t in transcriptions]
+        # Convert ORM objects to Pydantic schemas with chunk metadata
+        transcription_list = []
+        for transcription in transcriptions:
+            transcription_dict = {
+                'id': transcription.id,
+                'video_id': transcription.video_id,
+                'transcription_text': transcription.transcription_text,
+                'vector_embedding': transcription.vector_embedding,
+                'created_at': transcription.created_at,
+                'status': 'completed',
+                'chunk_based': len(transcription.chunks) > 0 if transcription.chunks else False,
+                'chunks_processed': len(transcription.chunks) if transcription.chunks else 0
+            }
+            transcription_list.append(TranscriptionResponse(**transcription_dict))
         
         return TranscriptionListResponse(
             transcriptions=transcription_list,
@@ -180,7 +211,9 @@ def get_transcription(
     Get details for a specific transcription by its database ID.
     """
     try:
-        transcription = db.query(Transcription).filter_by(id=transcription_id).first()
+        transcription = db.query(Transcription).options(
+            joinedload(Transcription.chunks)
+        ).filter_by(id=transcription_id).first()
         
         if transcription is None:
             raise ValidationException(
@@ -188,7 +221,19 @@ def get_transcription(
                 details={"transcription_id": transcription_id}
             )
         
-        return TranscriptionResponse.model_validate(transcription)
+        # Build response with chunk metadata
+        transcription_dict = {
+            'id': transcription.id,
+            'video_id': transcription.video_id,
+            'transcription_text': transcription.transcription_text,
+            'vector_embedding': transcription.vector_embedding,
+            'created_at': transcription.created_at,
+            'status': 'completed',
+            'chunk_based': len(transcription.chunks) > 0 if transcription.chunks else False,
+            'chunks_processed': len(transcription.chunks) if transcription.chunks else 0
+        }
+        
+        return TranscriptionResponse(**transcription_dict)
         
     except ValidationException:
         raise
@@ -212,14 +257,31 @@ def get_video_transcriptions(
     Multiple transcriptions per video are supported.
     """
     try:
-        transcriptions = db.query(Transcription).filter_by(
+        transcriptions = db.query(Transcription).options(
+            joinedload(Transcription.chunks)
+        ).filter_by(
             video_id=video_id
         ).order_by(
             Transcription.created_at.desc()
         ).all()
         
         # Return empty list if no transcriptions found (not 404)
-        return [TranscriptionResponse.model_validate(t) for t in transcriptions]
+        # Convert to response with chunk metadata
+        transcription_list = []
+        for transcription in transcriptions:
+            transcription_dict = {
+                'id': transcription.id,
+                'video_id': transcription.video_id,
+                'transcription_text': transcription.transcription_text,
+                'vector_embedding': transcription.vector_embedding,
+                'created_at': transcription.created_at,
+                'status': 'completed',
+                'chunk_based': len(transcription.chunks) > 0 if transcription.chunks else False,
+                'chunks_processed': len(transcription.chunks) if transcription.chunks else 0
+            }
+            transcription_list.append(TranscriptionResponse(**transcription_dict))
+        
+        return transcription_list
         
     except Exception as e:
         logger.exception(f"Error retrieving transcriptions for video {video_id}")
@@ -236,8 +298,15 @@ def delete_transcription(
 ):
     """
     Delete a specific transcription from the database.
+    
+    This endpoint deletes a transcription and its associated vector embeddings.
+    It checks for dependent generations before deletion and returns a 409 Conflict
+    if the transcription's video is used in any generation.
+    
+    Vector embeddings and chunk transcriptions are automatically cleaned up via cascade delete.
     """
     try:
+        # Fetch the transcription
         transcription = db.query(Transcription).filter_by(id=transcription_id).first()
         
         if not transcription:
@@ -246,13 +315,56 @@ def delete_transcription(
                 details={"transcription_id": transcription_id}
             )
         
+        video_id = transcription.video_id
+        
+        # Check for dependent generations
+        # Generations store video_ids in an array, so we need to check if this video_id is in any generation
+        from sqlalchemy import any_
+        generations = db.query(Generation).filter(
+            video_id == any_(Generation.video_ids)
+        ).all()
+        
+        if generations:
+            generation_count = len(generations)
+            logger.warning(
+                f"Cannot delete transcription {transcription_id} for video {video_id}: "
+                f"used in {generation_count} generation(s)"
+            )
+            raise DependencyException(
+                f"Cannot delete transcription because its video is used in {generation_count} generation(s)",
+                details={
+                    "transcription_id": transcription_id,
+                    "video_id": video_id,
+                    "generation_count": generation_count
+                },
+                dependent_resources=[
+                    {"type": "generation", "id": g.id}
+                    for g in generations
+                ]
+            )
+        
+        # Check if this is a chunk-based transcription
+        chunk_count = len(transcription.chunks) if transcription.chunks else 0
+        
+        # Delete the transcription (vector embeddings and chunk transcriptions are cleaned up automatically via cascade)
+        if chunk_count > 0:
+            logger.info(
+                f"Deleting transcription {transcription_id} for video {video_id} "
+                f"(includes {chunk_count} chunk transcription(s) and vector embeddings cleanup)"
+            )
+        else:
+            logger.info(
+                f"Deleting transcription {transcription_id} for video {video_id} "
+                f"(includes vector embeddings cleanup)"
+            )
+        
         db.delete(transcription)
         db.commit()
         
-        logger.info(f"Deleted transcription {transcription_id}")
+        logger.info(f"Successfully deleted transcription {transcription_id}")
         return None
         
-    except ValidationException:
+    except (ValidationException, DependencyException):
         raise
     except Exception as e:
         logger.exception(f"Error deleting transcription {transcription_id}")

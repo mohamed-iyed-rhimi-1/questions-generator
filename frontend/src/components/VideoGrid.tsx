@@ -1,5 +1,6 @@
-import { Video as VideoIcon, Loader2 } from 'lucide-react'
+import { Video as VideoIcon } from 'lucide-react'
 import { VideoCard } from '@/components/VideoCard'
+import { EmptyState } from '@/components/EmptyState'
 import { Video } from '@/types'
 
 export interface VideoGridProps {
@@ -16,11 +17,11 @@ export function VideoGrid({
   // Loading state
   if (isLoading) {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      <div className="grid responsive-grid-1-2-4 responsive-grid-gap">
         {Array.from({ length: 6 }).map((_, index) => (
           <div
             key={index}
-            className="card animate-pulse"
+            className="card animate-pulse responsive-card-padding"
           >
             <div className="aspect-video bg-gray-200 rounded-lg mb-4"></div>
             <div className="space-y-3">
@@ -39,23 +40,25 @@ export function VideoGrid({
 
   // Empty state
   if (videos.length === 0) {
+    const scrollToTop = () => {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+
     return (
-      <div className="text-center py-12">
-        <VideoIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">
-          {emptyMessage}
-        </h3>
-        <p className="text-gray-600">
-          Download some YouTube videos to get started
-        </p>
-      </div>
+      <EmptyState
+        icon={VideoIcon}
+        title={emptyMessage}
+        description="Start by entering YouTube video URLs in the download section above. You can download multiple videos at once."
+        actionLabel="Scroll to Download"
+        onAction={scrollToTop}
+      />
     )
   }
 
   // Grid layout
   return (
     <section
-      className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+      className="grid responsive-grid-1-2-4 responsive-grid-gap"
       aria-label="Video grid"
     >
       {videos.map((video) => (

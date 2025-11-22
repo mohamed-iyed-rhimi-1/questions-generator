@@ -34,6 +34,12 @@ class Transcription(Base):
     
     # Relationships
     video = relationship('Video', back_populates='transcriptions')
+    chunks = relationship(
+        'TranscriptionChunk',
+        back_populates='transcription',
+        cascade='all, delete-orphan',
+        order_by='TranscriptionChunk.chunk_id'
+    )
 
     def __repr__(self):
         return f"<Transcription(id={self.id}, video_id='{self.video_id}')>"

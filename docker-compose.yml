@@ -66,6 +66,8 @@ services:
       # Persistent cache for ML models (Whisper and sentence-transformers)
       - whisper_cache:/app/.cache/torch
       - huggingface_cache:/app/.cache/huggingface
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy

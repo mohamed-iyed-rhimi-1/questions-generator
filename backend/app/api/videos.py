@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List
 import logging
 from pathlib import Path
 
 from app.database import get_db
-from app.exceptions import ValidationException, DatabaseException
+from app.exceptions import ValidationException, DatabaseException, DependencyException
 from app.schemas import (
     DownloadVideosRequest,
     DownloadVideosResponse,
@@ -17,7 +17,9 @@ from app.schemas import (
     TranscriptionResponse,
 )
 from app.models.video import Video
+from app.models.transcription import Transcription
 from app.services import process_multiple_urls, process_multiple_transcriptions
+from app.services.chunk_service import delete_chunks_for_video, get_chunks_for_video
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -58,7 +60,24 @@ def download_videos(
             # Convert ORM object to VideoResponse if present
             video_response = None
             if result.get('video'):
-                video_response = VideoResponse.model_validate(result['video'])
+                video = result['video']
+                # Ensure chunks relationship is loaded
+                if video.chunks is None:
+                    # Refresh to load chunks if not already loaded
+                    db.refresh(video, ['chunks'])
+                
+                video_dict = {
+                    'id': video.id,
+                    'video_id': video.video_id,
+                    'title': video.title,
+                    'thumbnail_url': video.thumbnail_url,
+                    'file_path': video.file_path,
+                    'created_at': video.created_at,
+                    'download_status': 'completed',
+                    'has_chunks': len(video.chunks) > 0 if video.chunks else False,
+                    'chunk_count': len(video.chunks) if video.chunks else 0
+                }
+                video_response = VideoResponse(**video_dict)
             
             download_result = DownloadResult(
                 url=result['url'],
@@ -119,13 +138,30 @@ def list_videos(
         limit = 1000
     
     try:
-        # Execute query directly - FastAPI runs sync routes in threadpool
-        videos = db.query(Video).order_by(
+        # Execute query with eager loading of chunks - FastAPI runs sync routes in threadpool
+        videos = db.query(Video).options(
+            joinedload(Video.chunks)
+        ).order_by(
             Video.created_at.desc()
         ).offset(skip).limit(limit).all()
         
-        # Convert ORM objects to Pydantic schemas
-        return [VideoResponse.model_validate(video) for video in videos]
+        # Convert ORM objects to Pydantic schemas with chunk metadata
+        video_responses = []
+        for video in videos:
+            video_dict = {
+                'id': video.id,
+                'video_id': video.video_id,
+                'title': video.title,
+                'thumbnail_url': video.thumbnail_url,
+                'file_path': video.file_path,
+                'created_at': video.created_at,
+                'download_status': 'completed',
+                'has_chunks': len(video.chunks) > 0 if video.chunks else False,
+                'chunk_count': len(video.chunks) if video.chunks else 0
+            }
+            video_responses.append(VideoResponse(**video_dict))
+        
+        return video_responses
         
     except ValidationException:
         raise
@@ -148,8 +184,10 @@ def get_video(
     Returns video metadata and file information for the specified video.
     """
     try:
-        # Execute query directly - FastAPI runs sync routes in threadpool
-        video = db.query(Video).filter_by(video_id=video_id).first()
+        # Execute query with eager loading of chunks - FastAPI runs sync routes in threadpool
+        video = db.query(Video).options(
+            joinedload(Video.chunks)
+        ).filter_by(video_id=video_id).first()
         
         if video is None:
             raise ValidationException(
@@ -157,7 +195,20 @@ def get_video(
                 details={"video_id": video_id}
             )
         
-        return VideoResponse.model_validate(video)
+        # Build response with chunk metadata
+        video_dict = {
+            'id': video.id,
+            'video_id': video.video_id,
+            'title': video.title,
+            'thumbnail_url': video.thumbnail_url,
+            'file_path': video.file_path,
+            'created_at': video.created_at,
+            'download_status': 'completed',
+            'has_chunks': len(video.chunks) > 0 if video.chunks else False,
+            'chunk_count': len(video.chunks) if video.chunks else 0
+        }
+        
+        return VideoResponse(**video_dict)
         
     except ValidationException:
         raise
@@ -263,37 +314,129 @@ def delete_video(
     db: Session = Depends(get_db)
 ):
     """
-    Delete a video and its associated audio file.
+    Delete a video and its associated files (audio and thumbnail).
     
-    Removes the video record from the database and deletes the audio file from storage.
+    Checks for dependent transcriptions before deletion. If transcriptions exist,
+    returns 409 Conflict. Otherwise, removes the video record from the database
+    and deletes associated audio and thumbnail files from storage.
+    
+    Raises:
+        ValidationException: If video not found (404)
+        DependencyException: If video has dependent transcriptions (409)
+        DatabaseException: If database operation fails (500)
     """
     try:
-        # Execute deletion directly - FastAPI runs sync routes in threadpool
+        # Fetch video from database
         video = db.query(Video).filter_by(video_id=video_id).first()
+        
         if not video:
             raise ValidationException(
                 f"Video with ID {video_id} not found",
                 details={"video_id": video_id}
             )
         
-        # Delete audio file if it exists
+        # Check for dependent transcriptions
+        transcription_count = db.query(Transcription).filter_by(
+            video_id=video_id
+        ).count()
+        
+        if transcription_count > 0:
+            transcriptions = db.query(Transcription).filter_by(
+                video_id=video_id
+            ).all()
+            
+            logger.warning(
+                f"Cannot delete video {video_id}: has {transcription_count} dependent transcription(s)"
+            )
+            
+            raise DependencyException(
+                "Cannot delete video because it has dependent transcriptions",
+                details={
+                    "video_id": video_id,
+                    "transcription_count": transcription_count
+                },
+                dependent_resources=[
+                    {"type": "transcription", "id": t.id}
+                    for t in transcriptions
+                ]
+            )
+        
+        # Check if chunks exist for this video
+        chunks = get_chunks_for_video(video_id, db)
+        chunks_deleted = 0
+        
+        if chunks:
+            # Delete chunks before deleting video record
+            try:
+                chunks_deleted = delete_chunks_for_video(video_id, db)
+                logger.info(
+                    f"Deleted {chunks_deleted} chunks for video {video_id}",
+                    extra={'video_id': video_id, 'chunks_deleted': chunks_deleted}
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to delete chunks for video {video_id}: {e}",
+                    extra={'video_id': video_id}
+                )
+                # Continue with video deletion even if chunk deletion fails
+                # The cascade delete will handle database records
+        
+        # CRITICAL: Delete files from storage BEFORE deleting database record
+        files_deleted = []
+        
+        # Delete audio file
         if video.file_path:
             try:
-                Path(video.file_path).unlink(missing_ok=True)
+                audio_path = Path(video.file_path)
+                if audio_path.exists():
+                    audio_path.unlink()
+                    files_deleted.append(str(audio_path))
+                    logger.info(f"Deleted audio file: {audio_path}")
+                else:
+                    logger.info(f"Audio file not found (already deleted): {audio_path}")
             except Exception as e:
                 logger.warning(f"Failed to delete audio file {video.file_path}: {e}")
+        
+        # Delete thumbnail file if it exists
+        # Thumbnails are stored in backend/storage/thumbnails/{video_id}.webp
+        thumbnail_path = Path(f"backend/storage/thumbnails/{video_id}.webp")
+        if thumbnail_path.exists():
+            try:
+                thumbnail_path.unlink()
+                files_deleted.append(str(thumbnail_path))
+                logger.info(f"Deleted thumbnail file: {thumbnail_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete thumbnail file {thumbnail_path}: {e}")
+        else:
+            logger.info(f"Thumbnail file not found (may not exist): {thumbnail_path}")
         
         # Delete database record
         db.delete(video)
         db.commit()
         
-        logger.info(f"Deleted video {video_id}")
+        # Log comprehensive deletion summary
+        deletion_summary = []
+        if chunks_deleted > 0:
+            deletion_summary.append(f"{chunks_deleted} chunks")
+        if files_deleted:
+            deletion_summary.append(f"{len(files_deleted)} file(s)")
+        
+        logger.info(
+            f"Successfully deleted video {video_id}"
+            + (f" and {', '.join(deletion_summary)}" if deletion_summary else ""),
+            extra={
+                'video_id': video_id,
+                'chunks_deleted': chunks_deleted,
+                'files_deleted': files_deleted
+            }
+        )
         return None
         
-    except ValidationException:
+    except (ValidationException, DependencyException):
         raise
     except Exception as e:
-        logger.exception(f"Error deleting video {video_id}")
+        logger.exception(f"Unexpected error deleting video {video_id}")
+        db.rollback()
         raise DatabaseException(
             "Failed to delete video",
             details={"video_id": video_id, "error": str(e)}

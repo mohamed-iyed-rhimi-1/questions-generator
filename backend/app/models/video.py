@@ -32,6 +32,12 @@ class Video(Base):
         back_populates='video',
         cascade='all, delete-orphan'  # Delete transcriptions when video is deleted
     )
+    chunks = relationship(
+        'Chunk',
+        back_populates='video',
+        cascade='all, delete-orphan',
+        order_by='Chunk.chunk_index'
+    )
 
     def __repr__(self):
         return f"<Video(video_id='{self.video_id}', title='{self.title}')>"
