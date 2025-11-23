@@ -112,6 +112,7 @@ export interface Question {
   generation_id: number;
   video_id: string;
   question_text: string;
+  answer?: string | null;
   context?: string;
   difficulty?: string;
   question_type?: string;
@@ -126,6 +127,7 @@ export interface Question {
  */
 export interface UpdateQuestionRequest {
   question_text?: string;
+  answer?: string | null;
   context?: string;
   difficulty?: string;
   question_type?: string;

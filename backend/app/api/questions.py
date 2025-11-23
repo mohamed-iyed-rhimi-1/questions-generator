@@ -161,6 +161,7 @@ def generate_questions(
                             generation_id=generation.id,
                             video_id=video_id,
                             question_text=question_response.question_text,
+                            answer=question_response.answer,
                             context=question_response.context,
                             difficulty=question_response.difficulty,
                             question_type=question_response.question_type,

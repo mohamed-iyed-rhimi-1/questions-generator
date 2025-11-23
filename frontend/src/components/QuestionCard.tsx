@@ -43,6 +43,10 @@ export const QuestionCard = ({ question, index }: QuestionCardProps) => {
     }
   };
 
+  console.log({
+    question
+  })
+
   return (
     <article className="card responsive-card-padding" aria-label={`Question ${index !== undefined ? index + 1 : ''}`}>
       {/* Header section */}
@@ -72,9 +76,22 @@ export const QuestionCard = ({ question, index }: QuestionCardProps) => {
         {question.question_text}
       </div>
 
+      {/* Answer section */}
+      {question.answer && (
+        <div className="mt-3" role="region" aria-label="Question answer">
+          <span className="text-sm font-medium text-gray-700" id={`answer-label-${question.id}`}>الإجابة:</span>
+          <div 
+            className="text-sm text-gray-700 bg-blue-50 p-3 rounded-lg border border-blue-200 mt-1 leading-relaxed" 
+            aria-labelledby={`answer-label-${question.id}`}
+          >
+            {question.answer}
+          </div>
+        </div>
+      )}
+
       {/* Context section */}
       {question.context && (
-        <div className="mt-2" role="region" aria-label="Question context">
+        <div className="mt-3" role="region" aria-label="Question context">
           <span className="text-sm font-medium text-gray-700" id={`context-label-${question.id}`}>Context:</span>
           <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-200 mt-1 italic" aria-labelledby={`context-label-${question.id}`}>
             {question.context}

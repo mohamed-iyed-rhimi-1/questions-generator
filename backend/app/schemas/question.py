@@ -44,6 +44,7 @@ class GeneratedQuestion(BaseModel):
     
     video_id: str
     question_text: str
+    answer: Optional[str] = None
     context: Optional[str] = None
     difficulty: Optional[str] = None
     question_type: Optional[str] = None
@@ -56,6 +57,7 @@ class QuestionResponse(BaseModel):
     generation_id: int
     video_id: str
     question_text: str
+    answer: Optional[str] = None
     context: Optional[str] = None
     difficulty: Optional[str] = None
     question_type: Optional[str] = None
@@ -93,6 +95,7 @@ class UpdateQuestionRequest(BaseModel):
     """Request schema for updating a question."""
     
     question_text: Optional[str] = None
+    answer: Optional[str] = None
     context: Optional[str] = None
     difficulty: Optional[str] = None
     question_type: Optional[str] = None

@@ -31,6 +31,7 @@ class Question(Base):
     
     # Question content
     question_text = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)  # Comprehensive answer to the question
     context = Column(Text, nullable=True)  # Context from transcription
     
     # Question metadata

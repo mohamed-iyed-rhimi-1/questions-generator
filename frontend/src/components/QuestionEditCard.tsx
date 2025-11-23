@@ -48,6 +48,7 @@ export const QuestionEditCard = ({
   // Local state for editing
   const [editedQuestion, setEditedQuestion] = useState({
     question_text: question.question_text,
+    answer: question.answer || '',
     context: question.context || '',
     difficulty: question.difficulty || '',
     question_type: question.question_type || '',
@@ -74,6 +75,9 @@ export const QuestionEditCard = ({
     if (editedQuestion.question_text !== question.question_text) {
       updates.question_text = editedQuestion.question_text;
     }
+    if (editedQuestion.answer !== (question.answer || '')) {
+      updates.answer = editedQuestion.answer || undefined;
+    }
     if (editedQuestion.context !== (question.context || '')) {
       updates.context = editedQuestion.context || undefined;
     }
@@ -96,6 +100,7 @@ export const QuestionEditCard = ({
   const handleCancel = () => {
     setEditedQuestion({
       question_text: question.question_text,
+      answer: question.answer || '',
       context: question.context || '',
       difficulty: question.difficulty || '',
       question_type: question.question_type || '',
@@ -283,6 +288,38 @@ export const QuestionEditCard = ({
           <div className="text-lg font-medium text-gray-900" role="heading" aria-level={3}>
             {question.question_text}
           </div>
+        )}
+      </div>
+
+      {/* Answer section */}
+      <div className="mt-4">
+        {isEditing ? (
+          <div>
+            <label htmlFor={`answer-${question.id}`} className="block text-sm font-medium text-gray-700 mb-1">
+              الإجابة:
+            </label>
+            <textarea
+              id={`answer-${question.id}`}
+              value={editedQuestion.answer}
+              onChange={(e) => setEditedQuestion({
+                ...editedQuestion,
+                answer: e.target.value
+              })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              rows={4}
+              placeholder="اكتب إجابة شاملة للسؤال..."
+              aria-label="Answer text"
+            />
+          </div>
+        ) : (
+          question.answer && (
+            <div role="region" aria-label="Question answer">
+              <span className="text-sm font-medium text-gray-700" id={`answer-label-${question.id}`}>الإجابة:</span>
+              <div className="text-sm text-gray-800 bg-blue-50 p-3 rounded-lg border border-blue-200 mt-1" aria-labelledby={`answer-label-${question.id}`}>
+                {question.answer}
+              </div>
+            </div>
+          )
         )}
       </div>
 
